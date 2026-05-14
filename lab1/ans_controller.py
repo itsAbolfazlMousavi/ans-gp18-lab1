@@ -24,6 +24,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
+from ryu.lib.packet import packet, ethernet
 
 
 class LearningSwitch(app_manager.RyuApp):
@@ -33,6 +34,7 @@ class LearningSwitch(app_manager.RyuApp):
         super(LearningSwitch, self).__init__(*args, **kwargs)
 
         # Here you can initialize the data structures you want to keep at the controller
+        self.mac_to_port = {}  # {dpid: {mac: port}}
         
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -67,3 +69,47 @@ class LearningSwitch(app_manager.RyuApp):
         datapath = msg.datapath
 
         # Your controller implementation should start here
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
+
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+
+        if eth is None:
+            return
+
+        dpid = datapath.id
+        if dpid not in self.mac_to_port:
+            self.mac_to_port[dpid] = {}
+
+        # 1. Learn: record which port this source MAC came from
+        self.mac_to_port[dpid][eth.src] = in_port
+
+        # 2. Look up destination MAC
+        if eth.dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][eth.dst]
+        else:
+            out_port = ofproto.OFPP_FLOOD  # destination unknown → flood
+
+        # Safety: never send frame back out the port it arrived on
+        if out_port == in_port:
+            return
+
+        actions = [parser.OFPActionOutput(out_port)]
+
+        # 3. Install a flow rule only for known unicast destinations
+        #    Match on (in_port + eth_dst) to be port-specific and avoid
+        #    false matches if a MAC moves to a different port later
+        if out_port != ofproto.OFPP_FLOOD:
+            match = parser.OFPMatch(in_port=in_port, eth_dst=eth.dst)
+            self.add_flow(datapath, 1, match, actions)
+
+        # 4. Send the current packet out
+        data = None
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
+
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                  in_port=in_port, actions=actions, data=data)
+        datapath.send_msg(out)
