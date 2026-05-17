@@ -19,31 +19,39 @@
  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  """
 
-#!/usr/bin/python
+#!/bin/env python3
 
 from mininet.topo import Topo
+from mininet.net import Mininet
+from mininet.node import RemoteController, OVSKernelSwitch
 from mininet.link import TCLink
-from mininet.node import OVSBridge
+from mininet.cli import CLI
+from mininet.log import setLogLevel
 
-class BridgeTopo(Topo):
-    "Creat a bridge-like customized network topology according to Figure 1 in the lab0 description."
+
+class NetworkTopo(Topo):
 
     def __init__(self):
 
         Topo.__init__(self)
-        s1 = self.addSwitch("s1", cls=OVSBridge)
-        s2 = self.addSwitch("s2", cls=OVSBridge)
-        # h1 = self.addHost("h1")
-        # h2 = self.addHost("h2")   
-        # h3 = self.addHost("h3")
-        # h4 = self.addHost("h4")
-        hosts = [self.addHost('h%d' % i, ip="10.0.0.%d/24" % i)
-            for i in range(1,5)]
-        for h in hosts[:2]:
-            self.addLink(h,s1,bw=15, delay="10", cls=TCLink)
-        for h in hosts[2:]:
-            self.addLink(h,s2, bw=15, delay="10", cls=TCLink)    
 
-        self.addLink(s1,s2,bw=20, delay="45")
+        # Build the specified network topology here
 
-topos = {'bridge': (lambda: BridgeTopo())}
+def run():
+    topo = NetworkTopo()
+    net = Mininet(topo=topo,
+                  switch=OVSKernelSwitch,
+                  link=TCLink,
+                  controller=None)
+    net.addController(
+        'c1', 
+        controller=RemoteController, 
+        ip="127.0.0.1", 
+        port=6653)
+    net.start()
+    CLI(net)
+    net.stop()
+
+if __name__ == '__main__':
+    setLogLevel('info')
+    run()
